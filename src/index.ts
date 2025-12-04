@@ -22,8 +22,49 @@ import JSON5 from "json5";
 import { IAgent } from "./agents/type";
 import agentsManager from "./agents";
 import { EventEmitter } from "node:events";
+import { logTrajectory } from "./utils/trajectoryLogger";
 
 const event = new EventEmitter()
+
+const captureStreamResponse = (stream: ReadableStream, req: any, config: any) => {
+  const parserStream: any = stream.pipeThrough(new SSEParserTransform());
+  const reader = parserStream.getReader();
+  (async () => {
+    let text = "";
+    const events: any[] = [];
+    let usage: any;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        events.push(value);
+        const delta = value?.data?.delta;
+        if (delta?.text) {
+          if (Array.isArray(delta.text)) {
+            text += delta.text.join("");
+          } else {
+            text += delta.text;
+          }
+        }
+        if (value?.data?.usage) {
+          usage = value.data.usage;
+        }
+      }
+      await logTrajectory(req, config, {
+        stage: "response",
+        response: {
+          text,
+          usage,
+          events,
+        },
+      });
+    } catch (error) {
+      req.log?.error?.("Failed to log trajectory response", error);
+    } finally {
+      reader.releaseLock?.();
+    }
+  })();
+};
 
 async function initializeClaudeConfig() {
   const homeDir = homedir();
@@ -192,17 +233,26 @@ async function run(options: RunOptions = {}) {
         config,
         event
       });
+      await logTrajectory(req, config, { stage: "request" });
     }
   });
   server.addHook("onError", async (request, reply, error) => {
     event.emit('onError', request, reply, error);
   })
   server.addHook("onSend", (req, reply, payload, done) => {
-    if (req.sessionId && req.url.startsWith("/v1/messages") && !req.url.startsWith("/v1/messages/count_tokens")) {
+    const isMessageEndpoint = req.url.startsWith("/v1/messages") && !req.url.startsWith("/v1/messages/count_tokens");
+    const shouldLogTrajectory = config.LOG_TRAJECTORY === true;
+    if (req.sessionId && isMessageEndpoint) {
       if (payload instanceof ReadableStream) {
+        let streamPayload: any = payload;
+        if (shouldLogTrajectory) {
+          const [forwardStream, logStream] = streamPayload.tee();
+          streamPayload = forwardStream;
+          captureStreamResponse(logStream, req, config);
+        }
         if (req.agents) {
           const abortController = new AbortController();
-          const eventStream = payload.pipeThrough(new SSEParserTransform())
+          const eventStream = streamPayload.pipeThrough(new SSEParserTransform())
           let currentAgent: undefined | IAgent;
           let currentToolIndex = -1
           let currentToolName = ''
@@ -326,7 +376,7 @@ async function run(options: RunOptions = {}) {
           }).pipeThrough(new SSESerializerTransform()))
         }
 
-        const [originalStream, clonedStream] = payload.tee();
+        const [originalStream, clonedStream] = streamPayload.tee();
         const read = async (stream: ReadableStream) => {
           const reader = stream.getReader();
           try {
@@ -359,12 +409,18 @@ async function run(options: RunOptions = {}) {
       }
       sessionUsageCache.put(req.sessionId, payload.usage);
       if (typeof payload ==='object') {
+        if (shouldLogTrajectory) {
+          logTrajectory(req, config, { stage: "response", response: payload });
+        }
         if (payload.error) {
           return done(payload.error, null)
         } else {
           return done(payload, null)
         }
       }
+    }
+    if (shouldLogTrajectory && isMessageEndpoint) {
+      logTrajectory(req, config, { stage: "response", response: payload });
     }
     if (typeof payload ==='object' && payload.error) {
       return done(payload.error, null)
