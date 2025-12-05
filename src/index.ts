@@ -23,6 +23,7 @@ import { IAgent } from "./agents/type";
 import agentsManager from "./agents";
 import { EventEmitter } from "node:events";
 import { logTrajectory } from "./utils/trajectoryLogger";
+import { applyProxyFromEnv } from "./utils/proxy";
 
 const event = new EventEmitter()
 
@@ -91,6 +92,8 @@ interface RunOptions {
 }
 
 async function run(options: RunOptions = {}) {
+  // Ensure all outgoing HTTP(S) requests honor the proxy configuration.
+  applyProxyFromEnv();
   // Check if service is already running
   const isRunning = await isServiceRunning()
   if (isRunning) {
@@ -103,6 +106,8 @@ async function run(options: RunOptions = {}) {
   // Clean up old log files, keeping only the 10 most recent ones
   await cleanupLogFiles();
   const config = await initConfig();
+  // Re-apply proxy with config values in case proxy is configured there.
+  applyProxyFromEnv(config);
 
 
   let HOST = config.HOST || "127.0.0.1";
