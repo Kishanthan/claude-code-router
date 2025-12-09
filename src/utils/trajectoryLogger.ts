@@ -30,6 +30,51 @@ const getTrajectoryFile = (req: any, config: any) => {
   return DEFAULT_FILE;
 };
 
+const collectText = (value: any, parts: string[]) => {
+  if (!value) return;
+  if (typeof value === "string") {
+    parts.push(value);
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectText(item, parts));
+    return;
+  }
+  if (typeof value === "object") {
+    collectText(value.text, parts);
+    collectText(value.content, parts);
+  }
+};
+
+const normalizeResponse = (response: any) => {
+  if (!response) return undefined;
+  const normalized: Record<string, any> = { ...response };
+
+  // If events were captured from streaming, rebuild a single text string.
+  if (Array.isArray(response.events)) {
+    const parts: string[] = [];
+    response.events.forEach((evt: any) => {
+      const data = evt?.data ?? evt;
+      collectText(data?.delta?.text, parts);
+      collectText(data?.delta?.content, parts);
+      collectText(data?.delta?.content_block?.text, parts);
+      collectText(data?.message?.content, parts);
+    });
+    if (parts.length) {
+      normalized.text = parts.join("");
+    }
+    // Do not persist raw event stream in logs to keep files concise.
+    delete normalized.events;
+  }
+
+  // Ensure text is a single string when provided as an array.
+  if (Array.isArray(normalized.text)) {
+    normalized.text = normalized.text.join("");
+  }
+
+  return normalized;
+};
+
 /**
  * Append a trajectory record under ~/.claude-code-router/logs/trajectories/
  * Controlled by config.LOG_TRAJECTORY (boolean). Default: disabled.
@@ -43,6 +88,10 @@ export const logTrajectory = async (
   if (config.LOG_TRAJECTORY !== true) return;
   try {
     await ensureTrajectoryDir();
+    const { response: extraResponse, ...restExtra } = extra;
+    const normalizedResponse = extraResponse
+      ? normalizeResponse(extraResponse)
+      : undefined;
     const record = {
       timestamp: new Date().toISOString(),
       stage: extra.stage || "request",
@@ -55,8 +104,11 @@ export const logTrajectory = async (
       system: req.body?.system,
       messages: req.body?.messages,
       tools: req.body?.tools,
-      ...extra,
+      ...restExtra,
     };
+    if (normalizedResponse !== undefined) {
+      (record as any).response = normalizedResponse;
+    }
     const filePath = getTrajectoryFile(req, config);
     await appendFile(filePath, JSON.stringify(record) + "\n", "utf8");
   } catch (error) {

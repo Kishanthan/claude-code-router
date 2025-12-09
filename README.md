@@ -43,6 +43,18 @@ Then, install Claude Code Router:
 npm install -g @musistudio/claude-code-router
 ```
 
+**Need the latest source (e.g., recent trajectory logging fix) before it is published to npm?** Install directly from this repo:
+
+```shell
+git clone https://github.com/musistudio/claude-code-router.git
+cd claude-code-router
+npm install
+npm run build          # bundles to dist/cli.js
+npm install -g .       # installs the built CLI globally
+```
+
+After pulling new changes later, rerun `npm run build` then `npm install -g .` to refresh your global install with the latest code.
+
 ### 2. Configuration
 
 Create and configure your `~/.claude-code-router/config.json` file. For more details, you can refer to `config.example.json`.

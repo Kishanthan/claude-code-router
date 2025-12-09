@@ -1,0 +1,25 @@
+{
+  "CUSTOM_ROUTER_PATH": "~/.claude-code-router/custom-router.js",
+  "LOG_TRAJECTORY": true,
+  "LOG_TRAJECTORY_MODE": "session",
+  "Providers": [
+    {
+      "name": "vllm",
+      "api_base_url": "http://10.10.100.20:8818/v1/chat/completions",
+      "api_key": "none",
+      "models": ["openPangu-Embedded-7B-v1.1"]
+    },
+    {
+      "name": "silicanflow",
+      "api_base_url": "https://api.siliconflow.com/v1/chat/completions",
+      "api_key": "sk-<>",
+      "models": [
+        "deepseek-ai/DeepSeek-R1",
+        "Qwen/Qwen3-32B"
+      ]
+    }
+  ],
+  "Router": {
+    "default": "silicanflow,Qwen/Qwen3-32B"
+  }
+}
