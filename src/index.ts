@@ -32,6 +32,7 @@ const captureStreamResponse = (stream: ReadableStream, req: any, config: any) =>
   const reader = parserStream.getReader();
   (async () => {
     let text = "";
+    let reasoning = "";
     const events: any[] = [];
     let usage: any;
     try {
@@ -47,6 +48,14 @@ const captureStreamResponse = (stream: ReadableStream, req: any, config: any) =>
             text += delta.text;
           }
         }
+        const reasoningDelta = value?.data?.delta?.reasoning_content;
+        if (reasoningDelta) {
+          if (Array.isArray(reasoningDelta)) {
+            reasoning += reasoningDelta.join("");
+          } else {
+            reasoning += reasoningDelta;
+          }
+        }
         if (value?.data?.usage) {
           usage = value.data.usage;
         }
@@ -55,6 +64,7 @@ const captureStreamResponse = (stream: ReadableStream, req: any, config: any) =>
         stage: "response",
         response: {
           text,
+          reasoning,
           usage,
           events,
         },

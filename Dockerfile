@@ -33,8 +33,8 @@ COPY docker/custom-router.js /home/ccr/.claude-code-router/custom-router.js
 RUN chown -R ccr:ccr /home/ccr/.claude-code-router
 
 # Entrypoint to ensure CCR service is started before running any command
-COPY docker/entrypoint.sh /usr/local/bin/ccr-entrypoint.sh
-RUN chmod +x /usr/local/bin/ccr-entrypoint.sh
+# COPY docker/entrypoint.sh /usr/local/bin/ccr-entrypoint.sh
+# RUN chmod +x /usr/local/bin/ccr-entrypoint.sh
 
 EXPOSE 3456
 VOLUME ["/home/ccr/.claude-code-router"]
