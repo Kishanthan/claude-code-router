@@ -16,18 +16,27 @@ const getSafeSessionId = (sessionId?: string | null) => {
 
 const getTrajectoryFile = (req: any, config: any) => {
   const mode = config.LOG_TRAJECTORY_MODE;
+  const customName =
+    config.LOG_TRAJECTORY_NAME || process.env.LOG_TRAJECTORY_NAME;
+  const safeName = customName
+    ? customName.toString().replace(/[^a-zA-Z0-9_.-]/g, "_")
+    : "";
   const safeSession = getSafeSessionId(req.sessionId);
 
+  const base = safeName ? `${safeName}-` : "";
+
   if (mode === "session" && safeSession) {
-    return path.join(TRAJECTORY_DIR, `session-${safeSession}.jsonl`);
+    return path.join(TRAJECTORY_DIR, `${base}session-${safeSession}.jsonl`);
   }
 
   if (mode === "timestamp") {
     const ts = new Date().toISOString().replace(/[:.]/g, "-");
-    return path.join(TRAJECTORY_DIR, `request-${ts}.jsonl`);
+    return path.join(TRAJECTORY_DIR, `${base}request-${ts}.jsonl`);
   }
 
-  return DEFAULT_FILE;
+  return safeName
+    ? path.join(TRAJECTORY_DIR, `${base}requests.jsonl`)
+    : DEFAULT_FILE;
 };
 
 const collectText = (value: any, parts: string[]) => {

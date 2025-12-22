@@ -15,8 +15,15 @@ import { spawn, exec } from "child_process";
 import { PID_FILE, REFERENCE_COUNT_FILE } from "./constants";
 import fs, { existsSync, readFileSync } from "fs";
 import { join } from "path";
+import minimist from "minimist";
 
 const command = process.argv[2];
+const parsedArgs = minimist(process.argv.slice(3));
+const trajectoryName =
+  parsedArgs["trajectory-name"] || parsedArgs.trajectoryName || parsedArgs.tn;
+if (trajectoryName) {
+  process.env.LOG_TRAJECTORY_NAME = String(trajectoryName);
+}
 
 const HELP_TEXT = `
 Usage: ccr [command]
