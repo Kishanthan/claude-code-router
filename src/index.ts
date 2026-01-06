@@ -27,37 +27,98 @@ import { applyProxyFromEnv } from "./utils/proxy";
 
 const event = new EventEmitter()
 
-const captureStreamResponse = (stream: ReadableStream, req: any, config: any) => {
-  const parserStream: any = stream.pipeThrough(new SSEParserTransform());
+const captureStreamResponse = (
+  stream: ReadableStream,
+  req: any,
+  config: any,
+  onReasoning?: (chunk: string) => void
+) => {
+  // Tee the stream so we can parse structured SSE events and also retain the raw text for logging.
+  const [parseStream, rawStream] = stream.tee();
+
+  const parserStream: any = parseStream.pipeThrough(new SSEParserTransform(req.log));
   const reader = parserStream.getReader();
+  const rawReader = rawStream.getReader();
+
   (async () => {
     let text = "";
     let reasoning = "";
     const events: any[] = [];
     let usage: any;
+    let rawSse = "";
+    const decoder = new TextDecoder();
+
+    // Collect raw SSE concurrently.
+    (async () => {
+      try {
+        while (true) {
+          const { done, value } = await rawReader.read();
+          if (done) break;
+          rawSse += typeof value === "string" ? value : decoder.decode(value);
+        }
+      } catch {
+        // ignore raw read errors to avoid disrupting main logging
+      } finally {
+        rawReader.releaseLock?.();
+      }
+    })();
+
     try {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         events.push(value);
+        let sawReasoning = false;
+
+        // Anthropic-style delta
         const delta = value?.data?.delta;
         if (delta?.text) {
-          if (Array.isArray(delta.text)) {
-            text += delta.text.join("");
-          } else {
-            text += delta.text;
-          }
+          text += Array.isArray(delta.text) ? delta.text.join("") : delta.text;
         }
-        const reasoningDelta = value?.data?.delta?.reasoning_content;
+        const reasoningDelta = delta?.reasoning_content;
         if (reasoningDelta) {
-          if (Array.isArray(reasoningDelta)) {
-            reasoning += reasoningDelta.join("");
-          } else {
-            reasoning += reasoningDelta;
+          const r = Array.isArray(reasoningDelta)
+            ? reasoningDelta.join("")
+            : reasoningDelta;
+          reasoning += r;
+          sawReasoning = true;
+          onReasoning?.(r);
+        }
+        // OpenAI/compatible choice deltas
+        const choices = value?.data?.choices;
+        if (Array.isArray(choices)) {
+          for (const c of choices) {
+            const cd = c?.delta;
+            if (cd?.content) {
+              text += Array.isArray(cd.content)
+                ? cd.content.join("")
+                : cd.content;
+            }
+            if (cd?.text) {
+              text += Array.isArray(cd.text) ? cd.text.join("") : cd.text;
+            }
+            if (cd?.reasoning_content) {
+              const r = Array.isArray(cd.reasoning_content)
+                ? cd.reasoning_content.join("")
+                : cd.reasoning_content;
+              reasoning += r;
+              sawReasoning = true;
+              onReasoning?.(r);
+            }
+            if (cd?.reasoning) {
+              const r = Array.isArray(cd.reasoning) ? cd.reasoning.join("") : cd.reasoning;
+              reasoning += r;
+              sawReasoning = true;
+              onReasoning?.(r);
+            }
           }
         }
         if (value?.data?.usage) {
           usage = value.data.usage;
+        }
+
+        if (sawReasoning && process.env.LOG_SSE_DEBUG === "1") {
+          req.log?.info?.("SSE reasoning_content detected", { event: value });
         }
       }
       await logTrajectory(req, config, {
@@ -67,6 +128,7 @@ const captureStreamResponse = (stream: ReadableStream, req: any, config: any) =>
           reasoning,
           usage,
           events,
+          raw_sse: rawSse || undefined,
         },
       });
     } catch (error) {
@@ -216,6 +278,14 @@ async function run(options: RunOptions = {}) {
   server.addHook("preHandler", async (req, reply) => {
     if (req.url.startsWith("/v1/messages") && !req.url.startsWith("/v1/messages/count_tokens")) {
       const useAgents = []
+      if (req.body && req.body.reasoning === undefined) {
+        req.body.reasoning = { enabled: true };
+      }
+
+      // Log outbound request body for debugging/traceability
+      try {
+        req.log.info?.({ msg: "CCR outbound request body", body: req.body });
+      } catch (_) {}
 
       for (const agent of agentsManager.getAllAgents()) {
         if (agent.shouldHandle(req, config)) {
@@ -259,12 +329,46 @@ async function run(options: RunOptions = {}) {
     const shouldLogTrajectory = config.LOG_TRAJECTORY === true;
     if (req.sessionId && isMessageEndpoint) {
       if (payload instanceof ReadableStream) {
-        let streamPayload: any = payload;
+        // Tee early so trajectory logging captures the raw provider stream (including reasoning_content)
+        const [logStream, forwardStream] = payload.tee();
+        let streamPayload: any = forwardStream;
+        let reasoningBuffer = "";
+        const onReasoning = (chunk: string) => {
+          if (chunk) reasoningBuffer += chunk;
+        };
         if (shouldLogTrajectory) {
-          const [forwardStream, logStream] = streamPayload.tee();
-          streamPayload = forwardStream;
-          captureStreamResponse(logStream, req, config);
+          captureStreamResponse(logStream, req, config, onReasoning);
         }
+        const injectReasoning = (data: any) => {
+          const providerReasoning =
+            data?.data?.delta?.reasoning_content ??
+            data?.data?.delta?.reasoning ??
+            data?.data?.choices?.[0]?.delta?.reasoning_content ??
+            data?.data?.choices?.[0]?.delta?.reasoning;
+          const reasoningText = providerReasoning
+            ? Array.isArray(providerReasoning)
+              ? providerReasoning.join("")
+              : providerReasoning
+            : reasoningBuffer;
+          if (!reasoningText) return data;
+
+          // Always emit reasoning; if there was no text delta, create one.
+          if (data?.data?.delta?.text) {
+            if (Array.isArray(data.data.delta.text)) {
+              data.data.delta.text.push(reasoningText);
+            } else {
+              data.data.delta.text = `${data.data.delta.text}${reasoningText}`;
+            }
+          } else {
+            data.data = data.data || {};
+            data.data.delta = data.data.delta || {};
+            data.data.delta.text = reasoningText;
+          }
+          // Clear buffer once injected to avoid duplicates
+          reasoningBuffer = "";
+          return data;
+        };
+
         if (req.agents) {
           const abortController = new AbortController();
           const eventStream = streamPayload.pipeThrough(new SSEParserTransform())
@@ -278,6 +382,8 @@ async function run(options: RunOptions = {}) {
           // 存储Anthropic格式的消息体，区分文本和工具类型
           return done(null, rewriteStream(eventStream, async (data, controller) => {
             try {
+              injectReasoning(data);
+
               // 检测工具调用开始
               if (data.event === 'content_block_start' && data?.data?.content_block?.name) {
                 const agent = req.agents.find((name: string) => agentsManager.getAgent(name)?.tools.get(data.data.content_block.name))
@@ -427,6 +533,9 @@ async function run(options: RunOptions = {}) {
         if (shouldLogTrajectory) {
           logTrajectory(req, config, { stage: "response", response: payload });
         }
+        try {
+          req.log.info?.({ msg: "CCR outbound response", response: payload });
+        } catch (_) {}
         if (payload.error) {
           return done(payload.error, null)
         } else {
@@ -437,6 +546,9 @@ async function run(options: RunOptions = {}) {
     if (shouldLogTrajectory && isMessageEndpoint) {
       logTrajectory(req, config, { stage: "response", response: payload });
     }
+    try {
+      req.log.info?.({ msg: "CCR outbound response", response: payload });
+    } catch (_) {}
     if (typeof payload ==='object' && payload.error) {
       return done(payload.error, null)
     }

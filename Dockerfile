@@ -5,9 +5,24 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 
-# Build from local source
+# Build from local source (exclude external volume if present)
 COPY . .
+# Build local llms to ensure dist matches source
+RUN cd external/llms && npm ci --ignore-scripts && npm run build
+# Override @musistudio/llms with local patched copy
+RUN npm install --ignore-scripts --no-save ./external/llms
+# Build router
 RUN npm run build
+
+# Build claude-trace from local source
+WORKDIR /app/external/lemmy/apps/claude-trace
+# Skip husky install/prepare during build (ignore scripts, then build with HUSKY=0)
+RUN npm ci --ignore-scripts \
+    && cd frontend && npm ci --ignore-scripts && cd .. \
+    && HUSKY=0 npm run build
+
+# Back to app root for final image copy
+WORKDIR /app
 
 # Final runtime image
 FROM node:20-alpine
@@ -23,8 +38,9 @@ RUN addgroup -S ccr && adduser -S -G ccr ccr
 
 # Install the router globally from the built workspace
 COPY --from=builder /app /app
-RUN npm install -g /app
-RUN npm install -g @anthropic-ai/claude-code
+RUN npm install -g /app @anthropic-ai/claude-code /app/external/lemmy/apps/claude-trace
+# Ensure app directory and home are writable by non-root
+RUN chown -R ccr:ccr /app /home/ccr
 
 # Place default config and custom router for container use
 RUN mkdir -p /home/ccr/.claude-code-router
@@ -40,6 +56,9 @@ EXPOSE 3456
 VOLUME ["/home/ccr/.claude-code-router"]
 
 USER ccr
+
+# Run from home so claude-trace can create .claude-trace
+WORKDIR /home/ccr
 
 # ENTRYPOINT ["/usr/local/bin/ccr-entrypoint.sh"]
 # CMD ["sleep", "infinity"]

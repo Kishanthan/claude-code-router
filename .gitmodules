@@ -1,0 +1,8 @@
+[submodule "external/lemmy"]
+	path = external/lemmy
+	url = https://github.com/Kishanthan/lemmy
+
+[submodule "external/llms"]
+	path = external/llms
+	url = https://github.com/Kishanthan/llms
+

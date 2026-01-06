@@ -86,9 +86,14 @@ const normalizeResponse = (response: any) => {
     }
   })();
   const normalized: Record<string, any> = { ...response };
+  if (response.raw_sse) {
+    normalized.raw_sse = response.raw_sse;
+  }
 
   // If events were captured from streaming, rebuild combined text/reasoning and summarize.
   if (Array.isArray(response.events)) {
+    // Keep the original event list intact for full fidelity.
+    normalized.events = response.events;
     const parts: string[] = [];
     const reasoningParts: string[] = [];
     const tools: any[] = [];
@@ -107,6 +112,29 @@ const normalizeResponse = (response: any) => {
       collectText(data?.delta?.reasoning_content, reasoningParts);
       collectText(data?.message?.content, parts);
       collectText(data?.message?.reasoning_content, reasoningParts);
+
+      // Fallback: parse raw event JSON if present to rescue provider-specific fields.
+      if (data?._raw) {
+        try {
+          const parsedRaw = JSON.parse(data._raw);
+          collectText(parsedRaw?.delta?.reasoning_content, reasoningParts);
+          collectText(parsedRaw?.delta?.reasoning, reasoningParts);
+          collectText(parsedRaw?.choices?.[0]?.delta?.reasoning, reasoningParts);
+          collectText(parsedRaw?.choices?.[0]?.delta?.reasoning_content, reasoningParts);
+          const rd = parsedRaw?.choices?.[0]?.delta?.reasoning_details;
+          if (rd) {
+            collectText(rd, reasoningParts);
+            if (Array.isArray(rd)) {
+              rd.forEach((item: any) => collectText(item?.text, reasoningParts));
+            } else if (typeof rd === "object") {
+              collectText(rd.text, reasoningParts);
+            }
+          }
+          collectText(parsedRaw?.delta?.text, parts);
+        } catch {
+          // ignore parse errors of _raw
+        }
+      }
 
       // Rebuild tool_use inputs
       if (data?.type === "content_block_start" && data?.content_block?.type === "tool_use") {
@@ -147,10 +175,12 @@ const normalizeResponse = (response: any) => {
       normalized.text = parts.join("");
     }
     if (reasoningParts.length) {
+      const combinedReasoning = reasoningParts.join("");
       normalized.reasoning =
         typeof normalized.reasoning === "string"
-          ? normalized.reasoning + reasoningParts.join("")
-          : reasoningParts.join("");
+          ? normalized.reasoning + combinedReasoning
+          : combinedReasoning;
+      normalized.reasoning_content = combinedReasoning;
     }
     if (tools.length) {
       normalized.tool_calls = tools;
@@ -160,8 +190,8 @@ const normalizeResponse = (response: any) => {
     if (normalized.text) summary.push({ type: "text", content: normalized.text });
     if (normalized.reasoning) summary.push({ type: "reasoning", content: normalized.reasoning });
     tools.forEach((t) => summary.push({ type: "tool_use", ...t }));
-    // Replace events with merged summary for readability.
-    normalized.events = summary;
+    // Add a derived summary without discarding the original events.
+    normalized.events_summary = summary;
   }
 
   // Ensure text is a single string when provided as an array.
@@ -226,8 +256,13 @@ export const logTrajectory = async (
     if (normalizedResponse !== undefined) {
       (record as any).response = normalizedResponse;
     }
+
+    // Shape output similar to claude-trace: wrap by role.
+    const wrapped =
+      stage === "request" ? { request: record } : { response: record };
+
     const filePath = getTrajectoryFile(req, config);
-    await appendFile(filePath, JSON.stringify(record) + "\n", "utf8");
+    await appendFile(filePath, JSON.stringify(wrapped) + "\n", "utf8");
   } catch (error) {
     req.log?.error?.("Failed to log trajectory", error);
   }

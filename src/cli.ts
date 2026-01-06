@@ -24,6 +24,19 @@ const trajectoryName =
 if (trajectoryName) {
   process.env.LOG_TRAJECTORY_NAME = String(trajectoryName);
 }
+const traceEnabled = Boolean(parsedArgs.trace);
+const traceLog =
+  parsedArgs["trace-log"] || parsedArgs.traceLog || parsedArgs.tl;
+const traceBin = parsedArgs["trace-bin"] || parsedArgs.traceBin;
+if (traceEnabled) {
+  process.env.CCR_TRACE_ENABLED = "true";
+  if (traceLog) {
+    process.env.CCR_TRACE_LOG_NAME = String(traceLog);
+  }
+  if (traceBin) {
+    process.env.CCR_TRACE_BIN = String(traceBin);
+  }
+}
 
 const HELP_TEXT = `
 Usage: ccr [command]

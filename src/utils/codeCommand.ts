@@ -42,8 +42,15 @@ export async function executeCodeCommand(args: string[] = []) {
   // Increment reference count when command starts
   incrementReferenceCount();
 
-  // Execute claude command
-  const claudePath = config?.CLAUDE_PATH || process.env.CLAUDE_PATH || "claude";
+  // Determine tracing
+  const traceEnabled = process.env.CCR_TRACE_ENABLED === "true";
+  const traceLog = process.env.CCR_TRACE_LOG_NAME;
+  const traceBin = process.env.CCR_TRACE_BIN || "claude-trace";
+
+  // Execute claude command (or claude-trace wrapper)
+  const claudePath = traceEnabled
+    ? traceBin
+    : config?.CLAUDE_PATH || process.env.CLAUDE_PATH || "claude";
 
   const joinedArgs = args.length > 0 ? quote(args) : "";
 
@@ -53,6 +60,17 @@ export async function executeCodeCommand(args: string[] = []) {
 
   const argsObj = minimist(args)
   const argsArr = []
+  // Strip tracing flags from argsObj so they are not forwarded to claude
+  delete argsObj.trace;
+  delete (argsObj as any)["trace-log"];
+  delete (argsObj as any).traceLog;
+  delete (argsObj as any).tracelog;
+  delete (argsObj as any)["trace-bin"];
+  delete (argsObj as any).traceBin;
+  delete (argsObj as any).tl;
+  // Strip thinking flag; the Claude CLI doesn't understand it
+  delete (argsObj as any).thinking;
+
   for (const [argsObjKey, argsObjValue] of Object.entries(argsObj)) {
     if (argsObjKey !== '_' && argsObj[argsObjKey]) {
       const prefix = argsObjKey.length === 1 ? '-' : '--';
@@ -64,13 +82,62 @@ export async function executeCodeCommand(args: string[] = []) {
       }
     }
   }
+
+  // Remove tracing flags from the raw args for claude-trace pass-through
+  const sanitizedArgs: string[] = []
+  for (let i = 0; i < args.length; i++) {
+    const flag = args[i];
+    const isTraceFlag =
+      flag === "--trace" ||
+      flag === "--trace-log" ||
+      flag === "--traceLog" ||
+      flag === "--trace-bin" ||
+      flag === "--traceBin" ||
+      flag === "--tracelog" ||
+      flag === "--tl" ||
+      flag.startsWith("--trace-log=") ||
+      flag.startsWith("--traceLog=") ||
+      flag.startsWith("--trace-bin=") ||
+      flag.startsWith("--traceBin=") ||
+      flag.startsWith("--tracelog=") ||
+      flag.startsWith("--tl=");
+    const isThinkingFlag = flag === "--thinking" || flag === "--thinking=true" || flag === "--thinking=false";
+    if (isTraceFlag) {
+      // Skip this flag and its value if provided as next arg
+      if (
+        flag === "--trace-log" ||
+        flag === "--traceLog" ||
+        flag === "--trace-bin" ||
+        flag === "--traceBin" ||
+        flag === "--tracelog" ||
+        flag === "--tl"
+      ) {
+        i += 1;
+      }
+      continue;
+    }
+    if (isThinkingFlag) {
+      continue;
+    }
+    sanitizedArgs.push(flag);
+  }
+
+  const finalArgs = traceEnabled
+    ? [
+        ...(traceLog ? ["--log", traceLog] : []),
+        "--run-with",
+        ...sanitizedArgs,
+      ]
+    : argsArr;
+
   const claudeProcess = spawn(
     claudePath,
-    argsArr,
+    finalArgs,
     {
       env: process.env,
       stdio: stdioConfig,
-      shell: true,
+      shell: traceEnabled ? false : true,
+      cwd: traceEnabled ? process.env.HOME || undefined : undefined,
     }
   );
 
