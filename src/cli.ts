@@ -28,6 +28,13 @@ const traceEnabled = Boolean(parsedArgs.trace);
 const traceLog =
   parsedArgs["trace-log"] || parsedArgs.traceLog || parsedArgs.tl;
 const traceBin = parsedArgs["trace-bin"] || parsedArgs.traceBin;
+const allowWebTools =
+  parsedArgs["allow-web-tools"] || parsedArgs.allowWebTools || false;
+
+if (allowWebTools) {
+  process.env.CCR_ALLOW_WEB_TOOLS = "true";
+}
+
 if (traceEnabled) {
   process.env.CCR_TRACE_ENABLED = "true";
   if (traceLog) {

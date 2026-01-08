@@ -282,6 +282,13 @@ async function run(options: RunOptions = {}) {
         req.body.reasoning = { enabled: true };
       }
 
+      // Remove web-capable tools to avoid any network access via Claude Code unless explicitly allowed.
+      if (!process.env.CCR_ALLOW_WEB_TOOLS && Array.isArray(req.body?.tools)) {
+        req.body.tools = req.body.tools.filter(
+          (t: any) => t?.name !== "WebFetch" && t?.name !== "WebSearch"
+        );
+      }
+
       // Log outbound request body for debugging/traceability
       try {
         req.log.info?.({ msg: "CCR outbound request body", body: req.body });
