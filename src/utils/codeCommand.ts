@@ -46,6 +46,9 @@ export async function executeCodeCommand(args: string[] = []) {
   const traceEnabled = process.env.CCR_TRACE_ENABLED === "true";
   const traceLog = process.env.CCR_TRACE_LOG_NAME;
   const traceBin = process.env.CCR_TRACE_BIN || "claude-trace";
+  const traceLogDir =
+    process.env.CCR_TRACE_LOG_DIR ||
+    (process.env.HOME ? `${process.env.HOME}/.claude-trace` : undefined);
 
   // Execute claude command (or claude-trace wrapper)
   const claudePath = traceEnabled
@@ -70,6 +73,9 @@ export async function executeCodeCommand(args: string[] = []) {
   delete (argsObj as any).tl;
   // Strip thinking flag; the Claude CLI doesn't understand it
   delete (argsObj as any).thinking;
+  // Strip allow-web-tools flag; handled by CCR only
+  delete (argsObj as any)["allow-web-tools"];
+  delete (argsObj as any).allowWebTools;
 
   for (const [argsObjKey, argsObjValue] of Object.entries(argsObj)) {
     if (argsObjKey !== '_' && argsObj[argsObjKey]) {
@@ -102,6 +108,11 @@ export async function executeCodeCommand(args: string[] = []) {
       flag.startsWith("--tracelog=") ||
       flag.startsWith("--tl=");
     const isThinkingFlag = flag === "--thinking" || flag === "--thinking=true" || flag === "--thinking=false";
+    const isAllowWebToolsFlag =
+      flag === "--allow-web-tools" ||
+      flag === "--allowWebTools" ||
+      flag === "--allow-web-tools=true" ||
+      flag === "--allow-web-tools=false";
     if (isTraceFlag) {
       // Skip this flag and its value if provided as next arg
       if (
@@ -119,6 +130,9 @@ export async function executeCodeCommand(args: string[] = []) {
     if (isThinkingFlag) {
       continue;
     }
+    if (isAllowWebToolsFlag) {
+      continue;
+    }
     sanitizedArgs.push(flag);
   }
 
@@ -130,14 +144,21 @@ export async function executeCodeCommand(args: string[] = []) {
       ]
     : argsArr;
 
+  const envForSpawn = {
+    ...process.env,
+    ...(traceEnabled && traceLogDir
+      ? { CLAUDE_TRACE_LOG_DIR: traceLogDir }
+      : {}),
+  };
+
   const claudeProcess = spawn(
     claudePath,
     finalArgs,
     {
-      env: process.env,
+      env: envForSpawn,
       stdio: stdioConfig,
       shell: traceEnabled ? false : true,
-      cwd: traceEnabled ? process.env.HOME || undefined : undefined,
+      cwd: traceEnabled ? process.cwd() : undefined,
     }
   );
 
