@@ -179,6 +179,51 @@ const getUseModel = async (
   return Router!.default;
 };
 
+const setNestedValue = (target: any, path: string[], value: any) => {
+  let cur = target;
+  for (let i = 0; i < path.length - 1; i++) {
+    const key = path[i];
+    if (!cur[key] || typeof cur[key] !== "object") {
+      cur[key] = {};
+    }
+    cur = cur[key];
+  }
+  cur[path[path.length - 1]] = value;
+};
+
+const deleteNestedValue = (target: any, path: string[]) => {
+  let cur = target;
+  for (let i = 0; i < path.length - 1; i++) {
+    const key = path[i];
+    if (!cur[key] || typeof cur[key] !== "object") {
+      return;
+    }
+    cur = cur[key];
+  }
+  delete cur[path[path.length - 1]];
+};
+
+const applyRequestOverrides = (req: any, overrides?: Record<string, any>, remove?: string[]) => {
+  if (overrides && typeof overrides === "object") {
+    for (const [key, value] of Object.entries(overrides)) {
+      const path = key.split(".").filter(Boolean);
+      if (!path.length) continue;
+      if (value === null) {
+        deleteNestedValue(req.body, path);
+      } else {
+        setNestedValue(req.body, path, value);
+      }
+    }
+  }
+  if (Array.isArray(remove)) {
+    for (const key of remove) {
+      const path = String(key).split(".").filter(Boolean);
+      if (!path.length) continue;
+      deleteNestedValue(req.body, path);
+    }
+  }
+};
+
 export const router = async (req: any, _res: any, context: any) => {
   const { config, event } = context;
   // Parse sessionId from metadata.user_id
@@ -222,6 +267,25 @@ export const router = async (req: any, _res: any, context: any) => {
       model = await getUseModel(req, tokenCount, config, lastMessageUsage);
     }
     req.body.model = model;
+
+    // Apply provider/model-specific request overrides (e.g., thinking controls)
+    if (typeof req.body.model === "string" && req.body.model.includes(",")) {
+      const [providerName, modelName] = req.body.model.split(",");
+      const provider = config.Providers?.find(
+        (p: any) => p.name?.toLowerCase() === providerName.toLowerCase()
+      );
+      if (provider) {
+        applyRequestOverrides(req, provider.request_overrides, provider.request_remove);
+        if (provider.model_request_overrides && provider.model_request_overrides[modelName]) {
+          const modelOverrides = provider.model_request_overrides[modelName];
+          applyRequestOverrides(
+            req,
+            modelOverrides?.request_overrides ?? modelOverrides,
+            modelOverrides?.request_remove
+          );
+        }
+      }
+    }
   } catch (error: any) {
     req.log.error(`Error in router middleware: ${error.message}`);
     req.body.model = config.Router!.default;

@@ -71,6 +71,12 @@
         "deepseek/deepseek-chat-v3-0324",
         "@preset/kimi"
       ],
+      "model_request_overrides": {
+        "zai-org/glm-4.7": {
+          "enable_thinking": false,
+          "reasoning.enabled": false
+        }
+      },
       "transformer": {
         "use": [
           "openrouter"
