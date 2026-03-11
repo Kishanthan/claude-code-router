@@ -11,6 +11,8 @@ COPY . .
 RUN cd external/llms && npm ci --ignore-scripts && npm run build
 # Override @musistudio/llms with local patched copy
 RUN npm install --ignore-scripts --no-save ./external/llms
+# Ensure UI deps are installed inside the image (avoid host-linked node_modules)
+RUN rm -rf ui/node_modules && cd ui && npm ci
 # Build router
 RUN npm run build
 

@@ -295,13 +295,17 @@ The `activate` command sets the following environment variables:
 
 #### Providers
 
-The `Providers` array is where you define the different model providers you want to use. Each provider object requires:
+The `Providers` array is where you define the different model providers you want to use. Each provider object supports:
 
 - `name`: A unique name for the provider.
 - `api_base_url`: The full API endpoint for chat completions.
-- `api_key`: Your API key for the provider.
+- `api_key` (optional): Your API key for the provider. If omitted, no `Authorization` header is sent.
 - `models`: A list of model names available from this provider.
+- `headers` (optional): Custom headers to include on every request to this provider.
 - `transformer` (optional): Specifies transformers to process requests and responses.
+- `request_overrides` (optional): Dot-path overrides applied to every outgoing request body.
+- `request_remove` (optional): Dot-path keys removed from every outgoing request body.
+- `model_request_overrides` (optional): Per-model overrides/removals.
 
 #### Transformers
 
@@ -352,6 +356,51 @@ Transformers allow you to modify the request and response payloads to ensure com
           }
         ]
       ]
+    }
+  }
+  ```
+
+#### Custom Headers & Request Overrides
+
+- **Custom Headers**: Add provider-specific headers (e.g., vendor tokens).
+  ```json
+  {
+    "name": "siliconflow",
+    "api_base_url": "https://api.siliconflow.com/v1/chat/completions",
+    "api_key": "sk-xxx",
+    "models": ["deepseek-ai/DeepSeek-R1"],
+    "headers": {
+      "X-Provider-Key": "your-token",
+      "X-Org": "your-org"
+    }
+  }
+  ```
+
+- **Inject Extra Body Fields**: Use `request_overrides` to add provider-specific fields (including nested paths).
+  ```json
+  {
+    "name": "siye_api",
+    "api_base_url": "https://api.example.com/v1/chat/completions",
+    "models": ["glm-4.7"],
+    "request_overrides": {
+      "extra_body.enable_thinking": false
+    }
+  }
+  ```
+
+- **Per-Model Overrides**:
+  ```json
+  {
+    "name": "siye_api",
+    "api_base_url": "https://api.example.com/v1/chat/completions",
+    "models": ["glm-4.7"],
+    "model_request_overrides": {
+      "glm-4.7": {
+        "request_overrides": {
+          "extra_body.chat_template_kwargs.enable_thinking": false
+        },
+        "request_remove": ["tools", "tool_choice"]
+      }
     }
   }
   ```
