@@ -268,21 +268,38 @@ export const router = async (req: any, _res: any, context: any) => {
     }
     req.body.model = model;
 
-    // Apply provider/model-specific request overrides (e.g., thinking controls)
+    // Collect provider/model-specific request overrides and stash them on the
+    // request so they can be applied *after* the transformer chain in @musistudio/llms.
     if (typeof req.body.model === "string" && req.body.model.includes(",")) {
       const [providerName, modelName] = req.body.model.split(",");
       const provider = config.Providers?.find(
         (p: any) => p.name?.toLowerCase() === providerName.toLowerCase()
       );
       if (provider) {
-        applyRequestOverrides(req, provider.request_overrides, provider.request_remove);
+        const pendingOverrides: Record<string, any> = {};
+        const pendingRemove: string[] = [];
+
+        if (provider.request_overrides && typeof provider.request_overrides === "object") {
+          Object.assign(pendingOverrides, provider.request_overrides);
+        }
+        if (Array.isArray(provider.request_remove)) {
+          pendingRemove.push(...provider.request_remove);
+        }
+
         if (provider.model_request_overrides && provider.model_request_overrides[modelName]) {
           const modelOverrides = provider.model_request_overrides[modelName];
-          applyRequestOverrides(
-            req,
-            modelOverrides?.request_overrides ?? modelOverrides,
-            modelOverrides?.request_remove
-          );
+          const overrides = modelOverrides?.request_overrides ?? modelOverrides;
+          if (overrides && typeof overrides === "object") {
+            Object.assign(pendingOverrides, overrides);
+          }
+          if (Array.isArray(modelOverrides?.request_remove)) {
+            pendingRemove.push(...modelOverrides.request_remove);
+          }
+        }
+
+        if (Object.keys(pendingOverrides).length || pendingRemove.length) {
+          req.pendingRequestOverrides = pendingOverrides;
+          req.pendingRequestRemove = pendingRemove;
         }
       }
     }

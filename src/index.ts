@@ -278,9 +278,6 @@ async function run(options: RunOptions = {}) {
   server.addHook("preHandler", async (req, reply) => {
     if (req.url.startsWith("/v1/messages") && !req.url.startsWith("/v1/messages/count_tokens")) {
       const useAgents = []
-      if (req.body && req.body.reasoning === undefined) {
-        req.body.reasoning = { enabled: true };
-      }
 
       // Remove web-capable tools to avoid any network access via Claude Code unless explicitly allowed.
       if (!process.env.CCR_ALLOW_WEB_TOOLS && Array.isArray(req.body?.tools)) {
